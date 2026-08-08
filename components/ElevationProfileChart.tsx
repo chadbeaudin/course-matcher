@@ -42,7 +42,7 @@ export default function ElevationProfileChart({
         />
         <YAxis tickFormatter={(v) => `${v} ${eleUnit}`} width={72} tick={{ fill: tickColor }} />
         <Tooltip
-          formatter={(value: number) => [`${value} ${eleUnit}`, 'Elevation']}
+          formatter={(value) => [`${value} ${eleUnit}`, 'Elevation']}
           labelFormatter={(v) => `${v} ${distUnit}`}
           contentStyle={
             theme === 'dark'
