@@ -3,6 +3,7 @@ import {
   loadStoredUnitSystem,
   storeUnitSystem,
   kmToMi,
+  miToKm,
   mToFt,
   formatDistance,
   formatElevation,
@@ -50,6 +51,11 @@ describe('conversions and formatting', () => {
   it('converts km to mi and m to ft', () => {
     expect(kmToMi(1)).toBeCloseTo(0.621371, 5);
     expect(mToFt(1)).toBeCloseTo(3.28084, 5);
+  });
+
+  it('converts mi to km as the inverse of kmToMi', () => {
+    expect(miToKm(1)).toBeCloseTo(1.60934, 4);
+    expect(miToKm(kmToMi(10))).toBeCloseTo(10, 6);
   });
 
   it('formats distance per unit system', () => {

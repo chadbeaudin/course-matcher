@@ -77,7 +77,12 @@ export class RouteGraph {
    * from its outbound leg without needing full no-repeat-edge routing.
    */
   findPath(fromId: string, toId: string, penalizeSegIds?: Set<string>): PathResult | null {
-    if (!this.graph.getNode(fromId) || !this.graph.getNode(toId)) return null;
+    const fromNode = this.graph.getNode(fromId);
+    if (!fromNode || !this.graph.getNode(toId)) return null;
+
+    if (fromId === toId) {
+      return { points: [{ lat: fromNode.data.lat, lon: fromNode.data.lon }], segIds: new Set(), distanceKm: 0 };
+    }
 
     const finder = path.aStar(this.graph, {
       oriented: true,

@@ -30,6 +30,10 @@ export function kmToMi(km: number): number {
   return km * 0.621371;
 }
 
+export function miToKm(mi: number): number {
+  return mi / 0.621371;
+}
+
 export function mToFt(m: number): number {
   return m * 3.28084;
 }

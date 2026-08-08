@@ -43,6 +43,41 @@ describe('POST /api/generate', () => {
     });
   });
 
+  it('forwards approachDistanceKm to the generator when provided', async () => {
+    mockGenerate.mockResolvedValue([]);
+
+    await POST(
+      makeRequest({
+        startLat: 40.1,
+        startLon: -105.2,
+        targetDistanceKm: 5,
+        targetElevationGainM: 100,
+        approachDistanceKm: 3,
+      })
+    );
+
+    expect(mockGenerate).toHaveBeenCalledWith({
+      start: { lat: 40.1, lon: -105.2 },
+      targetDistanceKm: 5,
+      targetElevationGainM: 100,
+      approachDistanceKm: 3,
+    });
+  });
+
+  it('rejects a negative approachDistanceKm', async () => {
+    const res = await POST(
+      makeRequest({
+        startLat: 40,
+        startLon: -105,
+        targetDistanceKm: 5,
+        targetElevationGainM: 100,
+        approachDistanceKm: -1,
+      })
+    );
+    expect(res.status).toBe(400);
+    expect(mockGenerate).not.toHaveBeenCalled();
+  });
+
   it('returns a 502 with the error message when generation fails', async () => {
     mockGenerate.mockRejectedValue(new Error('No road data found near the start location'));
 

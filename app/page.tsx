@@ -11,6 +11,8 @@ import {
   storeUnitSystem,
   formatDistance,
   formatElevation,
+  distanceUnitLabel,
+  miToKm,
 } from '@/lib/units';
 import { type Theme, detectDefaultTheme, loadStoredTheme, storeTheme, applyTheme } from '@/lib/theme';
 import ElevationProfileChart from '@/components/ElevationProfileChart';
@@ -40,6 +42,7 @@ export default function Home() {
 
   const [startPoint, setStartPoint] = useState<StartPoint | null>(null);
   const [geoError, setGeoError] = useState<string | null>(null);
+  const [approachInput, setApproachInput] = useState('0');
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<RouteCandidate[] | null>(null);
@@ -100,6 +103,14 @@ export default function Home() {
     setGenerateError(null);
     setCandidates(null);
 
+    const approachValue = parseFloat(approachInput);
+    const approachDistanceKm =
+      Number.isFinite(approachValue) && approachValue > 0
+        ? unitSystem === 'imperial'
+          ? miToKm(approachValue)
+          : approachValue
+        : 0;
+
     try {
       const res = await fetch('/api/generate', {
         method: 'POST',
@@ -109,6 +120,7 @@ export default function Home() {
           startLon: startPoint.lon,
           targetDistanceKm: stats.distanceKm,
           targetElevationGainM: stats.elevationGainM,
+          approachDistanceKm,
         }),
       });
       const data = await res.json();
@@ -188,6 +200,29 @@ export default function Home() {
           </button>
           {geoError && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{geoError}</p>}
 
+          <div className="mt-4">
+            <label className="block text-sm font-medium">
+              Ride out before the match starts
+            </label>
+            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+              Distance you&apos;re willing to ride to clear a city or neighborhood before the
+              matched course begins. Leave at 0 to start matching right from the pin.
+            </p>
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                type="number"
+                min="0"
+                step="0.5"
+                value={approachInput}
+                onChange={(e) => setApproachInput(e.target.value)}
+                className="w-24 rounded-md border border-gray-300 bg-transparent px-3 py-1.5 text-sm dark:border-gray-700"
+              />
+              <span className="text-sm text-gray-600 dark:text-gray-400">
+                {distanceUnitLabel(unitSystem)}
+              </span>
+            </div>
+          </div>
+
           <div className="mt-3 h-72 overflow-hidden rounded-md border border-gray-300 dark:border-gray-700">
             <MapView
               center={mapCenter}
@@ -226,8 +261,10 @@ export default function Home() {
                     : 'border-gray-300 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900'
                 }`}
               >
-                {formatDistance(candidate.stats.distanceKm, unitSystem)} ·{' '}
-                {formatElevation(candidate.stats.elevationGainM, unitSystem)}
+                {formatDistance(candidate.matchedStats.distanceKm, unitSystem)} ·{' '}
+                {formatElevation(candidate.matchedStats.elevationGainM, unitSystem)}
+                {candidate.approachDistanceKm > 0 &&
+                  ` (+${formatDistance(candidate.approachDistanceKm, unitSystem)} out)`}
               </button>
             ))}
           </div>
@@ -240,20 +277,36 @@ export default function Home() {
             />
           </div>
 
-          <div className="mt-4 grid grid-cols-2 gap-4 text-center">
+          <div
+            className={`mt-4 grid gap-4 text-center ${
+              selectedCandidate.approachDistanceKm > 0 ? 'grid-cols-4' : 'grid-cols-2'
+            }`}
+          >
             <Stat
-              label="Distance"
-              value={formatDistance(selectedCandidate.stats.distanceKm, unitSystem)}
+              label="Course distance"
+              value={formatDistance(selectedCandidate.matchedStats.distanceKm, unitSystem)}
             />
             <Stat
-              label="Elevation gain"
-              value={formatElevation(selectedCandidate.stats.elevationGainM, unitSystem)}
+              label="Course elevation gain"
+              value={formatElevation(selectedCandidate.matchedStats.elevationGainM, unitSystem)}
             />
+            {selectedCandidate.approachDistanceKm > 0 && (
+              <>
+                <Stat
+                  label="Ride out"
+                  value={formatDistance(selectedCandidate.approachDistanceKm, unitSystem)}
+                />
+                <Stat
+                  label="Total ride"
+                  value={formatDistance(selectedCandidate.stats.distanceKm, unitSystem)}
+                />
+              </>
+            )}
           </div>
 
           <div className="mt-6">
             <ElevationProfileChart
-              profile={selectedCandidate.stats.profile}
+              profile={selectedCandidate.matchedStats.profile}
               unitSystem={unitSystem}
               theme={theme}
             />

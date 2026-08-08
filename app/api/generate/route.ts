@@ -6,6 +6,7 @@ interface GenerateRequestBody {
   startLon: number;
   targetDistanceKm: number;
   targetElevationGainM: number;
+  approachDistanceKm?: number;
 }
 
 function isValidBody(body: unknown): body is GenerateRequestBody {
@@ -17,7 +18,9 @@ function isValidBody(body: unknown): body is GenerateRequestBody {
     typeof b.targetDistanceKm === 'number' &&
     b.targetDistanceKm > 0 &&
     typeof b.targetElevationGainM === 'number' &&
-    b.targetElevationGainM >= 0
+    b.targetElevationGainM >= 0 &&
+    (b.approachDistanceKm === undefined ||
+      (typeof b.approachDistanceKm === 'number' && b.approachDistanceKm >= 0))
   );
 }
 
@@ -32,6 +35,7 @@ export async function POST(request: NextRequest) {
       start: { lat: body.startLat, lon: body.startLon },
       targetDistanceKm: body.targetDistanceKm,
       targetElevationGainM: body.targetElevationGainM,
+      approachDistanceKm: body.approachDistanceKm,
     });
     return NextResponse.json({ candidates });
   } catch (err) {
