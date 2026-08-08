@@ -1,3 +1,5 @@
+import type { OSMWay } from './overpass';
+
 export const SAMPLE_GPX = `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="test">
   <trk>
@@ -25,3 +27,26 @@ export const SAMPLE_GPX = `<?xml version="1.0" encoding="UTF-8"?>
     </trkseg>
   </trk>
 </gpx>`;
+
+// 3x3 grid of intersections (~111m spacing, node ids 1-9 row-major from the SW corner) via 3 horizontal + 3 vertical ways.
+export const GRID_WAYS: OSMWay[] = (() => {
+  const coord = (row: number, col: number) => ({
+    lat: 40.0 + row * 0.001,
+    lon: -105.0 + col * 0.001,
+  });
+  const nodeId = (row: number, col: number) => row * 3 + col + 1;
+
+  const rows = [0, 1, 2].map((row) => ({
+    id: 100 + row,
+    nodes: [0, 1, 2].map((col) => nodeId(row, col)),
+    geometry: [0, 1, 2].map((col) => coord(row, col)),
+  }));
+
+  const cols = [0, 1, 2].map((col) => ({
+    id: 200 + col,
+    nodes: [0, 1, 2].map((row) => nodeId(row, col)),
+    geometry: [0, 1, 2].map((row) => coord(row, col)),
+  }));
+
+  return [...rows, ...cols];
+})();

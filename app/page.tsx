@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { parseGpx, computeRouteStats, type RouteStats } from '@/lib/gpx';
+import type { RouteCandidate } from '@/lib/routeGenerator';
 import {
   type UnitSystem,
   detectDefaultUnitSystem,
@@ -13,12 +15,35 @@ import {
 import { type Theme, detectDefaultTheme, loadStoredTheme, storeTheme, applyTheme } from '@/lib/theme';
 import ElevationProfileChart from '@/components/ElevationProfileChart';
 
+const MapView = dynamic(() => import('@/components/Map'), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-full items-center justify-center text-sm text-gray-500 dark:text-gray-400">
+      Loading map…
+    </div>
+  ),
+});
+
+const DEFAULT_MAP_CENTER: [number, number] = [39.7392, -104.9903];
+
+interface StartPoint {
+  lat: number;
+  lon: number;
+}
+
 export default function Home() {
   const [stats, setStats] = useState<RouteStats | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [unitSystem, setUnitSystem] = useState<UnitSystem>('metric');
   const [theme, setTheme] = useState<Theme>('light');
+
+  const [startPoint, setStartPoint] = useState<StartPoint | null>(null);
+  const [geoError, setGeoError] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [candidates, setCandidates] = useState<RouteCandidate[] | null>(null);
+  const [selectedIndex, setSelectedIndex] = useState(0);
 
   useEffect(() => {
     setUnitSystem(loadStoredUnitSystem() ?? detectDefaultUnitSystem());
@@ -43,6 +68,8 @@ export default function Home() {
 
     setError(null);
     setFileName(file.name);
+    setCandidates(null);
+    setGenerateError(null);
 
     try {
       const text = await file.text();
@@ -53,6 +80,53 @@ export default function Home() {
       setError(err instanceof Error ? err.message : 'Failed to parse GPX file');
     }
   }
+
+  function handleUseMyLocation() {
+    if (!navigator.geolocation) {
+      setGeoError('Geolocation is not supported in this browser');
+      return;
+    }
+    setGeoError(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setStartPoint({ lat: pos.coords.latitude, lon: pos.coords.longitude }),
+      () => setGeoError('Could not get your location')
+    );
+  }
+
+  async function handleGenerate() {
+    if (!startPoint || !stats) return;
+
+    setGenerating(true);
+    setGenerateError(null);
+    setCandidates(null);
+
+    try {
+      const res = await fetch('/api/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          startLat: startPoint.lat,
+          startLon: startPoint.lon,
+          targetDistanceKm: stats.distanceKm,
+          targetElevationGainM: stats.elevationGainM,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Route generation failed');
+
+      setCandidates(data.candidates);
+      setSelectedIndex(0);
+    } catch (err) {
+      setGenerateError(err instanceof Error ? err.message : 'Route generation failed');
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  const selectedCandidate = candidates?.[selectedIndex] ?? null;
+  const mapCenter: [number, number] = startPoint
+    ? [startPoint.lat, startPoint.lon]
+    : DEFAULT_MAP_CENTER;
 
   return (
     <main className="mx-auto max-w-3xl px-6 py-12">
@@ -94,6 +168,95 @@ export default function Home() {
 
           <div className="mt-6">
             <ElevationProfileChart profile={stats.profile} unitSystem={unitSystem} theme={theme} />
+          </div>
+        </div>
+      )}
+
+      {stats && (
+        <div className="mt-10">
+          <h2 className="text-lg font-semibold">Start location</h2>
+          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+            Click the map or use your location to set where the generated route should start.
+          </p>
+
+          <button
+            type="button"
+            onClick={handleUseMyLocation}
+            className="mt-3 rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
+          >
+            Use my location
+          </button>
+          {geoError && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{geoError}</p>}
+
+          <div className="mt-3 h-72 overflow-hidden rounded-md border border-gray-300 dark:border-gray-700">
+            <MapView
+              center={mapCenter}
+              markerPosition={startPoint ? [startPoint.lat, startPoint.lon] : null}
+              onMapClick={(lat, lon) => setStartPoint({ lat, lon })}
+            />
+          </div>
+
+          <button
+            type="button"
+            disabled={!startPoint || generating}
+            onClick={handleGenerate}
+            className="mt-4 rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
+          >
+            {generating ? 'Generating route…' : 'Generate route'}
+          </button>
+          {generateError && (
+            <p className="mt-2 text-sm text-red-600 dark:text-red-400">{generateError}</p>
+          )}
+        </div>
+      )}
+
+      {candidates && candidates.length > 0 && selectedCandidate && (
+        <div className="mt-10">
+          <h2 className="text-lg font-semibold">Candidate routes</h2>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            {candidates.map((candidate, i) => (
+              <button
+                key={i}
+                type="button"
+                onClick={() => setSelectedIndex(i)}
+                className={`rounded-md border px-3 py-1.5 text-sm ${
+                  i === selectedIndex
+                    ? 'border-gray-900 bg-gray-900 text-white dark:border-gray-100 dark:bg-gray-100 dark:text-gray-900'
+                    : 'border-gray-300 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900'
+                }`}
+              >
+                {formatDistance(candidate.stats.distanceKm, unitSystem)} ·{' '}
+                {formatElevation(candidate.stats.elevationGainM, unitSystem)}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-4 h-72 overflow-hidden rounded-md border border-gray-300 dark:border-gray-700">
+            <MapView
+              center={mapCenter}
+              markerPosition={startPoint ? [startPoint.lat, startPoint.lon] : null}
+              route={selectedCandidate.points.map((p) => [p.lat, p.lon])}
+            />
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-4 text-center">
+            <Stat
+              label="Distance"
+              value={formatDistance(selectedCandidate.stats.distanceKm, unitSystem)}
+            />
+            <Stat
+              label="Elevation gain"
+              value={formatElevation(selectedCandidate.stats.elevationGainM, unitSystem)}
+            />
+          </div>
+
+          <div className="mt-6">
+            <ElevationProfileChart
+              profile={selectedCandidate.stats.profile}
+              unitSystem={unitSystem}
+              theme={theme}
+            />
           </div>
         </div>
       )}
