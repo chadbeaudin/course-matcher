@@ -27,7 +27,9 @@ npm run dev
 
 Open [http://localhost:3889](http://localhost:3889).
 
-Set `OVERPASS_URL` in `.env.local` to point at an Overpass API instance (a public instance works, e.g. `https://overpass-api.de/api/interpreter`; defaults to that if unset).
+Set `OVERPASS_URL` in `.env.local` to point at an Overpass API instance. Defaults to the public `https://overpass-api.de/api/interpreter` if unset — that's what production currently uses too, while a self-hosted instance finishes indexing.
+
+Live at [race-course-matcher.vercel.app](https://race-course-matcher.vercel.app/).
 
 ## Scripts
 

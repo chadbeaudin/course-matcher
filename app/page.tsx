@@ -235,10 +235,18 @@ export default function Home() {
             type="button"
             disabled={!startPoint || generating}
             onClick={handleGenerate}
-            className="mt-4 rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
+            className="mt-4 flex items-center gap-2 rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
           >
+            {generating && <Spinner />}
             {generating ? 'Generating route…' : 'Generate route'}
           </button>
+          {generating && (
+            <p className="mt-2 flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+              <Spinner />
+              Fetching roads and elevation data and scoring candidates — this can take 20-40
+              seconds.
+            </p>
+          )}
           {generateError && (
             <p className="mt-2 text-sm text-red-600 dark:text-red-400">{generateError}</p>
           )}
@@ -314,6 +322,25 @@ export default function Home() {
         </div>
       )}
     </main>
+  );
+}
+
+function Spinner() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      className="h-4 w-4 shrink-0 animate-spin"
+    >
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" opacity="0.25" />
+      <path
+        d="M21 12a9 9 0 0 0-9-9"
+        stroke="currentColor"
+        strokeWidth="3"
+        strokeLinecap="round"
+      />
+    </svg>
   );
 }
 
