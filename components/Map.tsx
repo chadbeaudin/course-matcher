@@ -43,9 +43,13 @@ function ClickHandler({ onMapClick }: { onMapClick?: (lat: number, lon: number) 
 
 function RecenterOnChange({ center }: { center: [number, number] }) {
   const map = useMap();
+  const [lat, lon] = center;
   useEffect(() => {
-    map.setView(center);
-  }, [center, map]);
+    map.setView([lat, lon]);
+    // Only re-center when the coordinates actually change, not on every
+    // parent re-render (`center` is a new array literal each time).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lat, lon, map]);
   return null;
 }
 
