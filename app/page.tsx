@@ -47,6 +47,8 @@ export default function Home() {
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<RouteCandidate[] | null>(null);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [hoveredPoint, setHoveredPoint] = useState<{ lat: number; lon: number } | null>(null);
+  const [routeHoverPoint, setRouteHoverPoint] = useState<{ lat: number; lon: number } | null>(null);
 
   useEffect(() => {
     setUnitSystem(loadStoredUnitSystem() ?? detectDefaultUnitSystem());
@@ -96,6 +98,14 @@ export default function Home() {
     );
   }
 
+  // Default the start location to the user's current position once a race is loaded.
+  useEffect(() => {
+    if (stats && !startPoint) {
+      handleUseMyLocation();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stats]);
+
   async function handleGenerate() {
     if (!startPoint || !stats) return;
 
@@ -127,12 +137,18 @@ export default function Home() {
       if (!res.ok) throw new Error(data.error ?? 'Route generation failed');
 
       setCandidates(data.candidates);
-      setSelectedIndex(0);
+      selectCandidate(0);
     } catch (err) {
       setGenerateError(err instanceof Error ? err.message : 'Route generation failed');
     } finally {
       setGenerating(false);
     }
+  }
+
+  function selectCandidate(i: number) {
+    setSelectedIndex(i);
+    setHoveredPoint(null);
+    setRouteHoverPoint(null);
   }
 
   const selectedCandidate = candidates?.[selectedIndex] ?? null;
@@ -253,7 +269,7 @@ export default function Home() {
         </div>
       )}
 
-      {candidates && candidates.length > 0 && selectedCandidate && (
+      {candidates && candidates.length > 0 && selectedCandidate && stats && (
         <div className="mt-10">
           <h2 className="text-lg font-semibold">Candidate routes</h2>
 
@@ -262,7 +278,7 @@ export default function Home() {
               <button
                 key={i}
                 type="button"
-                onClick={() => setSelectedIndex(i)}
+                onClick={() => selectCandidate(i)}
                 className={`rounded-md border px-3 py-1.5 text-sm ${
                   i === selectedIndex
                     ? 'border-gray-900 bg-gray-900 text-white dark:border-gray-100 dark:bg-gray-100 dark:text-gray-900'
@@ -282,11 +298,21 @@ export default function Home() {
               center={mapCenter}
               markerPosition={startPoint ? [startPoint.lat, startPoint.lon] : null}
               route={selectedCandidate.points.map((p) => [p.lat, p.lon])}
+              hoveredPoint={hoveredPoint}
+              onRouteHover={setRouteHoverPoint}
+            />
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-4 text-center">
+            <Stat label="Target distance" value={formatDistance(stats.distanceKm, unitSystem)} />
+            <Stat
+              label="Target elevation gain"
+              value={formatElevation(stats.elevationGainM, unitSystem)}
             />
           </div>
 
           <div
-            className={`mt-4 grid gap-4 text-center ${
+            className={`mt-2 grid gap-4 text-center ${
               selectedCandidate.approachDistanceKm > 0 ? 'grid-cols-4' : 'grid-cols-2'
             }`}
           >
@@ -315,8 +341,11 @@ export default function Home() {
           <div className="mt-6">
             <ElevationProfileChart
               profile={selectedCandidate.matchedStats.profile}
+              targetProfile={stats.profile}
               unitSystem={unitSystem}
               theme={theme}
+              onHoverPoint={setHoveredPoint}
+              highlightPoint={routeHoverPoint}
             />
           </div>
         </div>

@@ -7,6 +7,8 @@ export interface TrackPoint {
 export interface ProfilePoint {
   distanceKm: number;
   elevationM: number;
+  lat: number;
+  lon: number;
 }
 
 export interface ClimbSegment {
@@ -118,6 +120,36 @@ function pushSegmentIfSignificant(
   });
 }
 
+/**
+ * Interpolates a profile (elevation + position) at each of `binDistancesKm`,
+ * for plotting two profiles of different lengths against a shared distance
+ * axis, or for finding the map position under a point on that shared axis.
+ * Returns null for bins beyond the profile's own total distance, so its line
+ * just stops there rather than extrapolating flat.
+ */
+export function resampleProfile(profile: ProfilePoint[], binDistancesKm: number[]): (ProfilePoint | null)[] {
+  if (profile.length === 0) return binDistancesKm.map(() => null);
+
+  const total = profile[profile.length - 1].distanceKm;
+  let idx = 0;
+
+  return binDistancesKm.map((distanceKm) => {
+    if (distanceKm > total) return null;
+    while (idx < profile.length - 2 && profile[idx + 1].distanceKm < distanceKm) idx++;
+
+    const a = profile[idx];
+    const b = profile[Math.min(idx + 1, profile.length - 1)];
+    const span = b.distanceKm - a.distanceKm;
+    const t = span > 0 ? (distanceKm - a.distanceKm) / span : 0;
+    return {
+      distanceKm,
+      elevationM: a.elevationM + (b.elevationM - a.elevationM) * t,
+      lat: a.lat + (b.lat - a.lat) * t,
+      lon: a.lon + (b.lon - a.lon) * t,
+    };
+  });
+}
+
 export function computeRouteStats(points: TrackPoint[]): RouteStats {
   const smoothed = smoothElevations(points);
   const profile: ProfilePoint[] = [];
@@ -132,7 +164,7 @@ export function computeRouteStats(points: TrackPoint[]): RouteStats {
       if (delta > 0) elevationGainM += delta;
       else elevationLossM += Math.abs(delta);
     }
-    profile.push({ distanceKm, elevationM: smoothed[i] });
+    profile.push({ distanceKm, elevationM: smoothed[i], lat: points[i].lat, lon: points[i].lon });
   }
 
   return {

@@ -1,4 +1,4 @@
-import { parseGpx, computeRouteStats } from './gpx';
+import { parseGpx, computeRouteStats, resampleProfile, type ProfilePoint } from './gpx';
 import { SAMPLE_GPX } from './testFixtures';
 
 describe('parseGpx', () => {
@@ -35,5 +35,27 @@ describe('computeRouteStats', () => {
     expect(stats.distanceKm).toBe(0);
     expect(stats.elevationGainM).toBe(0);
     expect(stats.climbSegments).toHaveLength(0);
+  });
+});
+
+describe('resampleProfile', () => {
+  const profile: ProfilePoint[] = [
+    { distanceKm: 0, elevationM: 100, lat: 40, lon: -105 },
+    { distanceKm: 1, elevationM: 200, lat: 41, lon: -105 },
+    { distanceKm: 2, elevationM: 100, lat: 42, lon: -105 },
+  ];
+
+  it('interpolates elevation and position at each bin distance', () => {
+    const result = resampleProfile(profile, [0, 0.5, 1, 1.5, 2]);
+    expect(result.map((p) => p?.elevationM)).toEqual([100, 150, 200, 150, 100]);
+    expect(result.map((p) => p?.lat)).toEqual([40, 40.5, 41, 41.5, 42]);
+  });
+
+  it('returns null past the profile\'s own total distance', () => {
+    expect(resampleProfile(profile, [2.5, 3])).toEqual([null, null]);
+  });
+
+  it('returns all nulls for an empty profile', () => {
+    expect(resampleProfile([], [0, 1])).toEqual([null, null]);
   });
 });
