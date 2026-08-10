@@ -267,9 +267,9 @@ export default function Map({
             <Polyline
               positions={option.points}
               pathOptions={{
-                color: isHighlighted ? '#2563eb' : '#9ca3af',
+                color: isHighlighted ? '#2563eb' : '#c026d3',
                 weight: isHighlighted ? 5 : 4,
-                opacity: isHighlighted ? 0.9 : 0.6,
+                opacity: isHighlighted ? 0.9 : 0.85,
               }}
               interactive={false}
             />
