@@ -27,6 +27,36 @@ export interface RouteStats {
   climbSegments: ClimbSegment[];
 }
 
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+/** Serializes a route as a GPX course file, e.g. for exporting to a bike computer or route-planning service. */
+export function buildGpxCourse(points: TrackPoint[], name: string): string {
+  const safeName = escapeXml(name);
+  const trkpts = points
+    .map((p) => `      <trkpt lat="${p.lat}" lon="${p.lon}"><ele>${p.ele}</ele></trkpt>`)
+    .join('\n');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="course-matcher" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>${safeName}</name>
+  </metadata>
+  <trk>
+    <name>${safeName}</name>
+    <trkseg>
+${trkpts}
+    </trkseg>
+  </trk>
+</gpx>`;
+}
+
 export function parseGpx(xml: string): TrackPoint[] {
   const doc = new DOMParser().parseFromString(xml, 'application/xml');
   const errorNode = doc.querySelector('parsererror');

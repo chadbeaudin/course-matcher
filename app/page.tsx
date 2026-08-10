@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
-import { parseGpx, computeRouteStats, type RouteStats } from '@/lib/gpx';
+import { parseGpx, computeRouteStats, type RouteStats, type TrackPoint } from '@/lib/gpx';
 import type { RouteCandidate } from '@/lib/routeGenerator';
 import {
   type UnitSystem,
@@ -16,6 +16,9 @@ import {
 } from '@/lib/units';
 import { type Theme, detectDefaultTheme, loadStoredTheme, storeTheme, applyTheme } from '@/lib/theme';
 import ElevationProfileChart from '@/components/ElevationProfileChart';
+import RwgpsConnectDialog from '@/components/RwgpsConnectDialog';
+import RouteNameDialog from '@/components/RouteNameDialog';
+import RwgpsSuccessDialog from '@/components/RwgpsSuccessDialog';
 
 const MapView = dynamic(() => import('@/components/Map'), {
   ssr: false,
@@ -52,10 +55,94 @@ export default function Home() {
   const [hoveredPoint, setHoveredPoint] = useState<{ lat: number; lon: number } | null>(null);
   const [routeHoverPoint, setRouteHoverPoint] = useState<{ lat: number; lon: number } | null>(null);
 
+  const [rwgpsAccessToken, setRwgpsAccessToken] = useState<string | null>(null);
+  const [showRwgpsConnect, setShowRwgpsConnect] = useState(false);
+  const [showRouteNameDialog, setShowRouteNameDialog] = useState(false);
+  const [pendingExportPoints, setPendingExportPoints] = useState<TrackPoint[] | null>(null);
+  const [isRwgpsUploading, setIsRwgpsUploading] = useState(false);
+  const [rwgpsError, setRwgpsError] = useState<string | null>(null);
+  const [rwgpsUploadResult, setRwgpsUploadResult] = useState<{ routeUrl: string } | null>(null);
+
   useEffect(() => {
     setUnitSystem(loadStoredUnitSystem() ?? detectDefaultUnitSystem());
     setTheme(loadStoredTheme() ?? detectDefaultTheme());
   }, []);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('rwgps_settings');
+    const accessToken = saved ? JSON.parse(saved)?.accessToken ?? null : null;
+    setRwgpsAccessToken(accessToken);
+
+    const pending = sessionStorage.getItem('rwgps_pending_export');
+    if (pending) {
+      sessionStorage.removeItem('rwgps_pending_export');
+      const { points } = JSON.parse(pending) as { points: TrackPoint[] };
+      // Confirm the name again after reconnecting, rather than uploading silently.
+      if (accessToken) {
+        setPendingExportPoints(points);
+        setShowRouteNameDialog(true);
+      }
+    }
+  }, []);
+
+  async function uploadToRwgps(points: TrackPoint[], name: string, accessToken: string) {
+    setIsRwgpsUploading(true);
+    setRwgpsError(null);
+    try {
+      const res = await fetch('/api/export/rwgps', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ points, name, accessToken }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'RideWithGPS upload failed');
+      setRwgpsUploadResult({ routeUrl: data.routeUrl });
+    } catch (err) {
+      setRwgpsError(err instanceof Error ? err.message : 'RideWithGPS upload failed');
+    } finally {
+      setIsRwgpsUploading(false);
+    }
+  }
+
+  function handleExportToRwgps(points: TrackPoint[]) {
+    setPendingExportPoints(points);
+    if (!rwgpsAccessToken) {
+      // Saved now (rather than on the dialog's own "Connect" click) since that click
+      // navigates straight to RideWithGPS — there's no later moment to save it.
+      sessionStorage.setItem('rwgps_pending_export', JSON.stringify({ points }));
+      setShowRwgpsConnect(true);
+      return;
+    }
+    setShowRouteNameDialog(true);
+  }
+
+  function handleRouteNameConfirm(name: string) {
+    setShowRouteNameDialog(false);
+    if (pendingExportPoints && rwgpsAccessToken) {
+      uploadToRwgps(pendingExportPoints, name, rwgpsAccessToken);
+    }
+  }
+
+  function defaultRouteName(): string {
+    return fileName ? fileName.replace(/\.gpx$/i, '') : 'course-matcher route';
+  }
+
+  function renderRwgpsDialogs() {
+    return (
+      <>
+        <RwgpsConnectDialog isOpen={showRwgpsConnect} onClose={() => setShowRwgpsConnect(false)} />
+        <RouteNameDialog
+          isOpen={showRouteNameDialog}
+          initialName={defaultRouteName()}
+          onClose={() => setShowRouteNameDialog(false)}
+          onConfirm={handleRouteNameConfirm}
+        />
+        {rwgpsUploadResult && (
+          <RwgpsSuccessDialog routeUrl={rwgpsUploadResult.routeUrl} onClose={() => setRwgpsUploadResult(null)} />
+        )}
+      </>
+    );
+  }
 
   function handleUnitChange(system: UnitSystem) {
     setUnitSystem(system);
@@ -182,20 +269,26 @@ export default function Home() {
 
   if (candidates && candidates.length > 0 && selectedCandidate && stats) {
     return (
-      <RouteDetailScreen
-        candidate={selectedCandidate}
-        stats={stats}
-        unitSystem={unitSystem}
-        mapCenter={mapCenter}
-        startPoint={startPoint}
-        hoveredPoint={hoveredPoint}
-        onHoverPoint={setHoveredPoint}
-        routeHoverPoint={routeHoverPoint}
-        onRouteHover={setRouteHoverPoint}
-        onBack={() => setSelectedIndex(null)}
-        theme={theme}
-        onToggleTheme={toggleTheme}
-      />
+      <>
+        <RouteDetailScreen
+          candidate={selectedCandidate}
+          stats={stats}
+          unitSystem={unitSystem}
+          mapCenter={mapCenter}
+          startPoint={startPoint}
+          hoveredPoint={hoveredPoint}
+          onHoverPoint={setHoveredPoint}
+          routeHoverPoint={routeHoverPoint}
+          onRouteHover={setRouteHoverPoint}
+          onBack={() => setSelectedIndex(null)}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+          onExportToRwgps={() => handleExportToRwgps(selectedCandidate.points)}
+          isRwgpsUploading={isRwgpsUploading}
+          rwgpsError={rwgpsError}
+        />
+        {renderRwgpsDialogs()}
+      </>
     );
   }
 
@@ -312,6 +405,7 @@ export default function Home() {
         </div>
       )}
 
+      {renderRwgpsDialogs()}
     </main>
   );
 }
@@ -451,6 +545,9 @@ function RouteDetailScreen({
   onBack,
   theme,
   onToggleTheme,
+  onExportToRwgps,
+  isRwgpsUploading,
+  rwgpsError,
 }: {
   candidate: RouteCandidate;
   stats: RouteStats;
@@ -464,6 +561,9 @@ function RouteDetailScreen({
   onBack: () => void;
   theme: Theme;
   onToggleTheme: () => void;
+  onExportToRwgps: () => void;
+  isRwgpsUploading: boolean;
+  rwgpsError: string | null;
 }) {
   return (
     <main className="mx-auto max-w-3xl px-6 py-12">
@@ -477,9 +577,19 @@ function RouteDetailScreen({
           >
             Back to route options
           </button>
+          <button
+            type="button"
+            disabled={isRwgpsUploading}
+            onClick={onExportToRwgps}
+            className="flex items-center gap-2 rounded-md bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
+          >
+            {isRwgpsUploading && <Spinner />}
+            {isRwgpsUploading ? 'Uploading…' : 'Export to RideWithGPS'}
+          </button>
           <ThemeToggle theme={theme} onToggle={onToggleTheme} />
         </div>
       </div>
+      {rwgpsError && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{rwgpsError}</p>}
 
       <div className="mt-4 h-72 overflow-hidden rounded-md border border-gray-300 dark:border-gray-700">
         <MapView

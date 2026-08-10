@@ -1,11 +1,13 @@
 import {
   parseGpx,
+  buildGpxCourse,
   computeRouteStats,
   resampleProfile,
   buildTargetGradeFn,
   profileShapeError,
   climbProfileError,
   type ProfilePoint,
+  type TrackPoint,
 } from './gpx';
 import { SAMPLE_GPX } from './testFixtures';
 
@@ -175,5 +177,23 @@ describe('climbProfileError', () => {
     ];
 
     expect(climbProfileError(target, flat)).toBe(0);
+  });
+});
+
+describe('buildGpxCourse', () => {
+  const points: TrackPoint[] = [
+    { lat: 40.0, lon: -105.0, ele: 1500 },
+    { lat: 40.001, lon: -105.001, ele: 1510 },
+  ];
+
+  it('round-trips through parseGpx to the same points', () => {
+    const gpx = buildGpxCourse(points, 'Test Route');
+    expect(parseGpx(gpx)).toEqual(points);
+  });
+
+  it('escapes special characters in the route name', () => {
+    const gpx = buildGpxCourse(points, 'Ride & <Climb>');
+    expect(gpx).toContain('Ride &amp; &lt;Climb&gt;');
+    expect(gpx).not.toContain('<Climb>');
   });
 });
