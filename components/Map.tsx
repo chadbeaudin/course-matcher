@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { Fragment, useEffect, useRef } from 'react';
 import { MapContainer, TileLayer, Polyline, Marker, useMap, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -19,6 +19,11 @@ interface LatLon {
   lon: number;
 }
 
+interface RouteOption {
+  id: number;
+  points: [number, number][];
+}
+
 interface MapProps {
   center: [number, number];
   zoom?: number;
@@ -30,6 +35,16 @@ interface MapProps {
   hoveredPoint?: LatLon | null;
   /** Called with the nearest point on `route` as the mouse moves over it, or null when it leaves. */
   onRouteHover?: (point: LatLon | null) => void;
+  /** Multiple candidate routes to render at once, e.g. on a route-selection screen. */
+  routeOptions?: RouteOption[];
+  /** id of the route drawn in the highlight color (defaults to the recommended one). */
+  recommendedRouteId?: number;
+  /** id of the route currently hovered/highlighted, overriding the recommended color. */
+  highlightedRouteId?: number | null;
+  /** Called with a route's id when the mouse enters/leaves it, or null on leave. */
+  onRouteOptionHover?: (id: number | null) => void;
+  /** Called with a route's id when it's clicked. */
+  onRouteOptionClick?: (id: number) => void;
 }
 
 function ClickHandler({ onMapClick }: { onMapClick?: (lat: number, lon: number) => void }) {
@@ -38,6 +53,17 @@ function ClickHandler({ onMapClick }: { onMapClick?: (lat: number, lon: number) 
       onMapClick?.(e.latlng.lat, e.latlng.lng);
     },
   });
+  return null;
+}
+
+function InvalidateSizeOnMount() {
+  const map = useMap();
+  useEffect(() => {
+    // Leaflet measures its container synchronously on init, which can run before a
+    // flex/dynamic layout has settled into its final size.
+    const id = requestAnimationFrame(() => map.invalidateSize());
+    return () => cancelAnimationFrame(id);
+  }, [map]);
   return null;
 }
 
@@ -50,6 +76,37 @@ function RecenterOnChange({ center }: { center: [number, number] }) {
     // parent re-render (`center` is a new array literal each time).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lat, lon, map]);
+  return null;
+}
+
+/**
+ * Zooms/pans the map once so the full extent of the given route(s) is visible,
+ * rather than leaving it centered at the default zoom around the start point.
+ */
+function FitRouteBounds({
+  route,
+  routeOptions,
+}: {
+  route?: [number, number][];
+  routeOptions?: RouteOption[];
+}) {
+  const map = useMap();
+  const firedRef = useRef(false);
+
+  useEffect(() => {
+    if (firedRef.current) return;
+    const allPoints: [number, number][] = [...(route ?? [])];
+    routeOptions?.forEach((option) => allPoints.push(...option.points));
+    if (allPoints.length < 2) return;
+
+    firedRef.current = true;
+    // The container's real size (e.g. from a flex layout) can settle after Leaflet's
+    // initial measurement, leaving its cached size stale — invalidate it first so
+    // fitBounds (and the SVG renderer's clip bounds) use the actual visible area.
+    map.invalidateSize();
+    map.fitBounds(L.latLngBounds(allPoints), { padding: [32, 32] });
+  }, [map, route, routeOptions]);
+
   return null;
 }
 
@@ -150,6 +207,11 @@ export default function Map({
   className,
   hoveredPoint,
   onRouteHover,
+  routeOptions,
+  recommendedRouteId,
+  highlightedRouteId,
+  onRouteOptionHover,
+  onRouteOptionClick,
 }: MapProps) {
   return (
     <MapContainer
@@ -162,15 +224,58 @@ export default function Map({
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
+      <InvalidateSizeOnMount />
       <RecenterOnChange center={center} />
+      <FitRouteBounds route={route} routeOptions={routeOptions} />
       <ClickHandler onMapClick={onMapClick} />
       {markerPosition && <Marker position={markerPosition} />}
       {route && route.length > 1 && (
-        <Polyline positions={route} color="#2563eb" weight={5} opacity={0.85} />
+        <Polyline positions={route} pathOptions={{ color: '#2563eb', weight: 5, opacity: 0.85 }} />
       )}
       {route && route.length > 1 && onRouteHover && (
         <RouteHoverTracker route={route} onRouteHover={onRouteHover} />
       )}
+      {[...(routeOptions ?? [])]
+        .sort((a, b) => {
+          const aHighlighted =
+            (highlightedRouteId != null ? a.id === highlightedRouteId : a.id === recommendedRouteId) ? 1 : 0;
+          const bHighlighted =
+            (highlightedRouteId != null ? b.id === highlightedRouteId : b.id === recommendedRouteId) ? 1 : 0;
+          return aHighlighted - bHighlighted;
+        })
+        .map((option) => {
+        const isHighlighted =
+          highlightedRouteId != null
+            ? option.id === highlightedRouteId
+            : option.id === recommendedRouteId;
+        const eventHandlers =
+          onRouteOptionHover || onRouteOptionClick
+            ? {
+                mouseover: () => onRouteOptionHover?.(option.id),
+                mouseout: () => onRouteOptionHover?.(null),
+                click: () => onRouteOptionClick?.(option.id),
+              }
+            : undefined;
+        return (
+          <Fragment key={option.id}>
+            {/* Wide, invisible line so hovering/clicking near a thin route doesn't require pixel-precision. */}
+            <Polyline
+              positions={option.points}
+              pathOptions={{ opacity: 0, weight: 20 }}
+              eventHandlers={eventHandlers}
+            />
+            <Polyline
+              positions={option.points}
+              pathOptions={{
+                color: isHighlighted ? '#2563eb' : '#9ca3af',
+                weight: isHighlighted ? 5 : 4,
+                opacity: isHighlighted ? 0.9 : 0.6,
+              }}
+              interactive={false}
+            />
+          </Fragment>
+        );
+      })}
       <HoverMarker point={hoveredPoint} />
     </MapContainer>
   );

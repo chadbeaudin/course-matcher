@@ -156,13 +156,24 @@ export async function generateCandidateRoutes(options: GenerateOptions): Promise
   return dedupeSimilar(scored).slice(0, candidateCount);
 }
 
+function bearingDiffDeg(a: number, b: number): number {
+  const diff = Math.abs(a - b) % 360;
+  return diff > 180 ? 360 - diff : diff;
+}
+
+// Candidates heading in very different directions are meaningfully different
+// routes even when their stats happen to land close together, since scoring
+// biases every candidate toward the same target distance/elevation. Only
+// collapse candidates that are both stat-similar AND geometrically similar
+// (near the same bearing), so the UI isn't left with a single route option.
 function dedupeSimilar(candidates: RouteCandidate[]): RouteCandidate[] {
   const result: RouteCandidate[] = [];
   for (const candidate of candidates) {
     const isDuplicate = result.some(
       (existing) =>
         Math.abs(existing.matchedStats.distanceKm - candidate.matchedStats.distanceKm) < 0.05 &&
-        Math.abs(existing.matchedStats.elevationGainM - candidate.matchedStats.elevationGainM) < 5
+        Math.abs(existing.matchedStats.elevationGainM - candidate.matchedStats.elevationGainM) < 5 &&
+        bearingDiffDeg(existing.bearingDeg, candidate.bearingDeg) < 20
     );
     if (!isDuplicate) result.push(candidate);
   }

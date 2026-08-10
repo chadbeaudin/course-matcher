@@ -46,7 +46,9 @@ export default function Home() {
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<RouteCandidate[] | null>(null);
-  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [hoveredRouteIndex, setHoveredRouteIndex] = useState<number | null>(null);
+  const [pinnedRouteIndex, setPinnedRouteIndex] = useState<number | null>(null);
   const [hoveredPoint, setHoveredPoint] = useState<{ lat: number; lon: number } | null>(null);
   const [routeHoverPoint, setRouteHoverPoint] = useState<{ lat: number; lon: number } | null>(null);
 
@@ -137,7 +139,8 @@ export default function Home() {
       if (!res.ok) throw new Error(data.error ?? 'Route generation failed');
 
       setCandidates(data.candidates);
-      selectCandidate(0);
+      setSelectedIndex(null);
+      setPinnedRouteIndex(null);
     } catch (err) {
       setGenerateError(err instanceof Error ? err.message : 'Route generation failed');
     } finally {
@@ -151,10 +154,49 @@ export default function Home() {
     setRouteHoverPoint(null);
   }
 
-  const selectedCandidate = candidates?.[selectedIndex] ?? null;
+  const selectedCandidate = selectedIndex != null ? candidates?.[selectedIndex] ?? null : null;
   const mapCenter: [number, number] = startPoint
     ? [startPoint.lat, startPoint.lon]
     : DEFAULT_MAP_CENTER;
+
+  if (candidates && candidates.length > 0 && selectedIndex === null && stats) {
+    return (
+      <RouteSelectionScreen
+        candidates={candidates}
+        stats={stats}
+        unitSystem={unitSystem}
+        mapCenter={mapCenter}
+        startPoint={startPoint}
+        hoveredRouteIndex={hoveredRouteIndex}
+        onHoverRoute={setHoveredRouteIndex}
+        pinnedRouteIndex={pinnedRouteIndex}
+        onPinRoute={setPinnedRouteIndex}
+        onConfirmRoute={selectCandidate}
+        onBack={() => setCandidates(null)}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+      />
+    );
+  }
+
+  if (candidates && candidates.length > 0 && selectedCandidate && stats) {
+    return (
+      <RouteDetailScreen
+        candidate={selectedCandidate}
+        stats={stats}
+        unitSystem={unitSystem}
+        mapCenter={mapCenter}
+        startPoint={startPoint}
+        hoveredPoint={hoveredPoint}
+        onHoverPoint={setHoveredPoint}
+        routeHoverPoint={routeHoverPoint}
+        onRouteHover={setRouteHoverPoint}
+        onBack={() => setSelectedIndex(null)}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+      />
+    );
+  }
 
   return (
     <main className="mx-auto max-w-3xl px-6 py-12">
@@ -269,87 +311,212 @@ export default function Home() {
         </div>
       )}
 
-      {candidates && candidates.length > 0 && selectedCandidate && stats && (
-        <div className="mt-10">
-          <h2 className="text-lg font-semibold">Candidate routes</h2>
+    </main>
+  );
+}
 
-          <div className="mt-3 flex flex-wrap gap-2">
-            {candidates.map((candidate, i) => (
-              <button
-                key={i}
-                type="button"
-                onClick={() => selectCandidate(i)}
-                className={`rounded-md border px-3 py-1.5 text-sm ${
-                  i === selectedIndex
-                    ? 'border-gray-900 bg-gray-900 text-white dark:border-gray-100 dark:bg-gray-100 dark:text-gray-900'
-                    : 'border-gray-300 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900'
-                }`}
-              >
-                {formatDistance(candidate.matchedStats.distanceKm, unitSystem)} ·{' '}
-                {formatElevation(candidate.matchedStats.elevationGainM, unitSystem)}
-                {candidate.approachDistanceKm > 0 &&
-                  ` (+${formatDistance(candidate.approachDistanceKm, unitSystem)} out)`}
-              </button>
-            ))}
-          </div>
+function RouteSelectionScreen({
+  candidates,
+  stats,
+  unitSystem,
+  mapCenter,
+  startPoint,
+  hoveredRouteIndex,
+  onHoverRoute,
+  pinnedRouteIndex,
+  onPinRoute,
+  onConfirmRoute,
+  onBack,
+  theme,
+  onToggleTheme,
+}: {
+  candidates: RouteCandidate[];
+  stats: RouteStats;
+  unitSystem: UnitSystem;
+  mapCenter: [number, number];
+  startPoint: StartPoint | null;
+  hoveredRouteIndex: number | null;
+  onHoverRoute: (i: number | null) => void;
+  pinnedRouteIndex: number | null;
+  onPinRoute: (i: number | null) => void;
+  onConfirmRoute: (i: number) => void;
+  onBack: () => void;
+  theme: Theme;
+  onToggleTheme: () => void;
+}) {
+  const routeOptions = candidates.map((candidate, i) => ({
+    id: i,
+    points: candidate.points.map((p) => [p.lat, p.lon] as [number, number]),
+  }));
+  const activeIndex = hoveredRouteIndex ?? pinnedRouteIndex ?? 0;
 
-          <div className="mt-4 h-72 overflow-hidden rounded-md border border-gray-300 dark:border-gray-700">
-            <MapView
-              center={mapCenter}
-              markerPosition={startPoint ? [startPoint.lat, startPoint.lon] : null}
-              route={selectedCandidate.points.map((p) => [p.lat, p.lon])}
-              hoveredPoint={hoveredPoint}
-              onRouteHover={setRouteHoverPoint}
-            />
-          </div>
+  return (
+    <main className="mx-auto flex h-screen max-w-6xl flex-col px-6 py-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-semibold">Choose a route</h1>
+          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+            Target: {formatDistance(stats.distanceKm, unitSystem)} ·{' '}
+            {formatElevation(stats.elevationGainM, unitSystem)}. The recommended route is
+            highlighted — hover or click a route to preview it, then confirm your choice.
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={onBack}
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
+          >
+            Back
+          </button>
+          <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+        </div>
+      </div>
 
-          <div className="mt-4 grid grid-cols-2 gap-4 text-center">
-            <Stat label="Target distance" value={formatDistance(stats.distanceKm, unitSystem)} />
-            <Stat
-              label="Target elevation gain"
-              value={formatElevation(stats.elevationGainM, unitSystem)}
-            />
-          </div>
+      <div className="mt-4 min-h-0 flex-1 overflow-hidden rounded-md border border-gray-300 dark:border-gray-700">
+        <MapView
+          center={mapCenter}
+          markerPosition={startPoint ? [startPoint.lat, startPoint.lon] : null}
+          routeOptions={routeOptions}
+          recommendedRouteId={0}
+          highlightedRouteId={activeIndex}
+          onRouteOptionHover={onHoverRoute}
+          onRouteOptionClick={onPinRoute}
+        />
+      </div>
 
-          <div
-            className={`mt-2 grid gap-4 text-center ${
-              selectedCandidate.approachDistanceKm > 0 ? 'grid-cols-4' : 'grid-cols-2'
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        {candidates.map((candidate, i) => (
+          <button
+            key={i}
+            type="button"
+            onMouseEnter={() => onHoverRoute(i)}
+            onMouseLeave={() => onHoverRoute(null)}
+            onClick={() => onPinRoute(i)}
+            className={`rounded-md border px-3 py-1.5 text-sm ${
+              activeIndex === i
+                ? 'border-blue-600 bg-blue-50 text-blue-900 dark:border-blue-400 dark:bg-blue-950 dark:text-blue-100'
+                : 'border-gray-300 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900'
             }`}
           >
-            <Stat
-              label="Course distance"
-              value={formatDistance(selectedCandidate.matchedStats.distanceKm, unitSystem)}
-            />
-            <Stat
-              label="Course elevation gain"
-              value={formatElevation(selectedCandidate.matchedStats.elevationGainM, unitSystem)}
-            />
-            {selectedCandidate.approachDistanceKm > 0 && (
-              <>
-                <Stat
-                  label="Ride out"
-                  value={formatDistance(selectedCandidate.approachDistanceKm, unitSystem)}
-                />
-                <Stat
-                  label="Total ride"
-                  value={formatDistance(selectedCandidate.stats.distanceKm, unitSystem)}
-                />
-              </>
-            )}
-          </div>
+            {i === 0 && <span className="mr-1 font-semibold">Recommended</span>}
+            {formatDistance(candidate.matchedStats.distanceKm, unitSystem)} ·{' '}
+            {formatElevation(candidate.matchedStats.elevationGainM, unitSystem)}
+            {candidate.approachDistanceKm > 0 &&
+              ` (+${formatDistance(candidate.approachDistanceKm, unitSystem)} out)`}
+          </button>
+        ))}
 
-          <div className="mt-6">
-            <ElevationProfileChart
-              profile={selectedCandidate.matchedStats.profile}
-              targetProfile={stats.profile}
-              unitSystem={unitSystem}
-              theme={theme}
-              onHoverPoint={setHoveredPoint}
-              highlightPoint={routeHoverPoint}
-            />
-          </div>
+        <button
+          type="button"
+          onClick={() => onConfirmRoute(activeIndex)}
+          className="ml-auto rounded-md bg-gray-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-white"
+        >
+          Use this route
+        </button>
+      </div>
+    </main>
+  );
+}
+
+function RouteDetailScreen({
+  candidate,
+  stats,
+  unitSystem,
+  mapCenter,
+  startPoint,
+  hoveredPoint,
+  onHoverPoint,
+  routeHoverPoint,
+  onRouteHover,
+  onBack,
+  theme,
+  onToggleTheme,
+}: {
+  candidate: RouteCandidate;
+  stats: RouteStats;
+  unitSystem: UnitSystem;
+  mapCenter: [number, number];
+  startPoint: StartPoint | null;
+  hoveredPoint: { lat: number; lon: number } | null;
+  onHoverPoint: (point: { lat: number; lon: number } | null) => void;
+  routeHoverPoint: { lat: number; lon: number } | null;
+  onRouteHover: (point: { lat: number; lon: number } | null) => void;
+  onBack: () => void;
+  theme: Theme;
+  onToggleTheme: () => void;
+}) {
+  return (
+    <main className="mx-auto max-w-3xl px-6 py-12">
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold">Selected route</h1>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={onBack}
+            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
+          >
+            Back to route options
+          </button>
+          <ThemeToggle theme={theme} onToggle={onToggleTheme} />
         </div>
-      )}
+      </div>
+
+      <div className="mt-4 h-72 overflow-hidden rounded-md border border-gray-300 dark:border-gray-700">
+        <MapView
+          center={mapCenter}
+          markerPosition={startPoint ? [startPoint.lat, startPoint.lon] : null}
+          route={candidate.points.map((p) => [p.lat, p.lon])}
+          hoveredPoint={hoveredPoint}
+          onRouteHover={onRouteHover}
+        />
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-4 text-center">
+        <Stat label="Target distance" value={formatDistance(stats.distanceKm, unitSystem)} />
+        <Stat
+          label="Target elevation gain"
+          value={formatElevation(stats.elevationGainM, unitSystem)}
+        />
+      </div>
+
+      <div
+        className={`mt-2 grid gap-4 text-center ${
+          candidate.approachDistanceKm > 0 ? 'grid-cols-4' : 'grid-cols-2'
+        }`}
+      >
+        <Stat
+          label="Course distance"
+          value={formatDistance(candidate.matchedStats.distanceKm, unitSystem)}
+        />
+        <Stat
+          label="Course elevation gain"
+          value={formatElevation(candidate.matchedStats.elevationGainM, unitSystem)}
+        />
+        {candidate.approachDistanceKm > 0 && (
+          <>
+            <Stat
+              label="Ride out"
+              value={formatDistance(candidate.approachDistanceKm, unitSystem)}
+            />
+            <Stat
+              label="Total ride"
+              value={formatDistance(candidate.stats.distanceKm, unitSystem)}
+            />
+          </>
+        )}
+      </div>
+
+      <div className="mt-6">
+        <ElevationProfileChart
+          profile={candidate.matchedStats.profile}
+          targetProfile={stats.profile}
+          unitSystem={unitSystem}
+          theme={theme}
+          onHoverPoint={onHoverPoint}
+          highlightPoint={routeHoverPoint}
+        />
+      </div>
     </main>
   );
 }
