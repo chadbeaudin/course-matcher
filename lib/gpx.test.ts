@@ -1,4 +1,11 @@
-import { parseGpx, computeRouteStats, resampleProfile, type ProfilePoint } from './gpx';
+import {
+  parseGpx,
+  computeRouteStats,
+  resampleProfile,
+  buildTargetGradeFn,
+  profileShapeError,
+  type ProfilePoint,
+} from './gpx';
 import { SAMPLE_GPX } from './testFixtures';
 
 describe('parseGpx', () => {
@@ -57,5 +64,67 @@ describe('resampleProfile', () => {
 
   it('returns all nulls for an empty profile', () => {
     expect(resampleProfile([], [0, 1])).toEqual([null, null]);
+  });
+});
+
+describe('buildTargetGradeFn', () => {
+  it('reports the local grade at a given distance along the profile', () => {
+    // Climbs 100m over the first km (10% grade), flat for the second km.
+    const profile: ProfilePoint[] = [
+      { distanceKm: 0, elevationM: 0, lat: 40, lon: -105 },
+      { distanceKm: 1, elevationM: 100, lat: 41, lon: -105 },
+      { distanceKm: 2, elevationM: 100, lat: 42, lon: -105 },
+    ];
+    const gradeAt = buildTargetGradeFn(profile, 0.1);
+
+    expect(gradeAt(0)).toBeCloseTo(10, 5);
+    expect(gradeAt(1.5)).toBeCloseTo(0, 5);
+  });
+
+  it('returns 0 for a profile with fewer than two points', () => {
+    expect(buildTargetGradeFn([])(0)).toBe(0);
+    expect(buildTargetGradeFn([{ distanceKm: 0, elevationM: 0, lat: 40, lon: -105 }])(0)).toBe(0);
+  });
+});
+
+describe('profileShapeError', () => {
+  it('is 0 for an identical profile', () => {
+    const profile: ProfilePoint[] = [
+      { distanceKm: 0, elevationM: 0, lat: 40, lon: -105 },
+      { distanceKm: 1, elevationM: 100, lat: 41, lon: -105 },
+      { distanceKm: 2, elevationM: 100, lat: 42, lon: -105 },
+    ];
+    expect(profileShapeError(profile, profile)).toBe(0);
+  });
+
+  it('is larger for a candidate whose climb lands in the wrong place', () => {
+    // Target climbs 100m in the first km, flat for the second.
+    const target: ProfilePoint[] = [
+      { distanceKm: 0, elevationM: 0, lat: 40, lon: -105 },
+      { distanceKm: 1, elevationM: 100, lat: 41, lon: -105 },
+      { distanceKm: 2, elevationM: 100, lat: 42, lon: -105 },
+    ];
+    // Same total distance and gain, but the climb happens in the second km instead.
+    const misplacedClimb: ProfilePoint[] = [
+      { distanceKm: 0, elevationM: 0, lat: 40, lon: -105 },
+      { distanceKm: 1, elevationM: 0, lat: 41, lon: -105 },
+      { distanceKm: 2, elevationM: 100, lat: 42, lon: -105 },
+    ];
+    // Climbs the same 100m in the first km, just less steeply spread differently — still much closer to target.
+    const closeMatch: ProfilePoint[] = [
+      { distanceKm: 0, elevationM: 0, lat: 40, lon: -105 },
+      { distanceKm: 1, elevationM: 90, lat: 41, lon: -105 },
+      { distanceKm: 2, elevationM: 100, lat: 42, lon: -105 },
+    ];
+
+    const misplacedError = profileShapeError(misplacedClimb, target);
+    const closeError = profileShapeError(closeMatch, target);
+
+    expect(misplacedError).toBeGreaterThan(closeError);
+    expect(closeError).toBeGreaterThan(0);
+  });
+
+  it('returns 0 when either profile has fewer than two points', () => {
+    expect(profileShapeError([], [])).toBe(0);
   });
 });

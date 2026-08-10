@@ -74,7 +74,7 @@ function smoothElevations(points: TrackPoint[], windowSize = 5): number[] {
 const MIN_CLIMB_GRADE_PERCENT = 2;
 const MIN_CLIMB_LENGTH_KM = 0.1;
 
-function segmentClimbs(profile: ProfilePoint[]): ClimbSegment[] {
+export function segmentClimbs(profile: ProfilePoint[]): ClimbSegment[] {
   const segments: ClimbSegment[] = [];
   let segmentStartIdx: number | null = null;
 
@@ -148,6 +148,49 @@ export function resampleProfile(profile: ProfilePoint[], binDistancesKm: number[
       lon: a.lon + (b.lon - a.lon) * t,
     };
   });
+}
+
+/**
+ * Builds a lookup from cumulative distance to a profile's local grade (%) at
+ * that point, via a small forward window. Used both to bias route search
+ * toward matching a target's climbs rather than just its distance/total gain,
+ * and to score how well a finished candidate's climbs line up with it.
+ */
+export function buildTargetGradeFn(profile: ProfilePoint[], windowKm = 0.1): (distanceKm: number) => number {
+  if (profile.length < 2) return () => 0;
+  const total = profile[profile.length - 1].distanceKm;
+
+  return (distanceKm: number) => {
+    const d = Math.min(Math.max(distanceKm, 0), total);
+    const [a] = resampleProfile(profile, [d]);
+    const [b] = resampleProfile(profile, [Math.min(d + windowKm, total)]);
+    if (!a || !b || b.distanceKm <= a.distanceKm) return 0;
+    return ((b.elevationM - a.elevationM) / ((b.distanceKm - a.distanceKm) * 1000)) * 100;
+  };
+}
+
+/**
+ * Average absolute difference (percentage points) between two profiles' local
+ * grades at matching cumulative distances, over the distance they both cover.
+ * Two routes can have near-identical total distance and elevation gain while
+ * climbing at completely different points — this catches that, for scoring
+ * which candidate actually tracks the target's climbs rather than just its totals.
+ */
+export function profileShapeError(profile: ProfilePoint[], targetProfile: ProfilePoint[], binKm = 0.5): number {
+  if (profile.length < 2 || targetProfile.length < 2) return 0;
+  const total = Math.min(profile.at(-1)!.distanceKm, targetProfile.at(-1)!.distanceKm);
+  if (total <= 0) return 0;
+
+  const gradeAt = buildTargetGradeFn(profile, binKm);
+  const targetGradeAt = buildTargetGradeFn(targetProfile, binKm);
+
+  let sumAbsDiff = 0;
+  let count = 0;
+  for (let d = 0; d < total; d += binKm) {
+    sumAbsDiff += Math.abs(gradeAt(d) - targetGradeAt(d));
+    count++;
+  }
+  return count > 0 ? sumAbsDiff / count : 0;
 }
 
 export function computeRouteStats(points: TrackPoint[]): RouteStats {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateCandidateRoutes } from '@/lib/routeGenerator';
+import type { ProfilePoint } from '@/lib/gpx';
 
 interface GenerateRequestBody {
   startLat: number;
@@ -7,6 +8,22 @@ interface GenerateRequestBody {
   targetDistanceKm: number;
   targetElevationGainM: number;
   approachDistanceKm?: number;
+  targetProfile?: ProfilePoint[];
+}
+
+function isValidProfile(value: unknown): value is ProfilePoint[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (p) =>
+        typeof p === 'object' &&
+        p !== null &&
+        typeof (p as ProfilePoint).distanceKm === 'number' &&
+        typeof (p as ProfilePoint).elevationM === 'number' &&
+        typeof (p as ProfilePoint).lat === 'number' &&
+        typeof (p as ProfilePoint).lon === 'number'
+    )
+  );
 }
 
 function isValidBody(body: unknown): body is GenerateRequestBody {
@@ -20,7 +37,8 @@ function isValidBody(body: unknown): body is GenerateRequestBody {
     typeof b.targetElevationGainM === 'number' &&
     b.targetElevationGainM >= 0 &&
     (b.approachDistanceKm === undefined ||
-      (typeof b.approachDistanceKm === 'number' && b.approachDistanceKm >= 0))
+      (typeof b.approachDistanceKm === 'number' && b.approachDistanceKm >= 0)) &&
+    (b.targetProfile === undefined || isValidProfile(b.targetProfile))
   );
 }
 
@@ -36,6 +54,7 @@ export async function POST(request: NextRequest) {
       targetDistanceKm: body.targetDistanceKm,
       targetElevationGainM: body.targetElevationGainM,
       approachDistanceKm: body.approachDistanceKm,
+      targetProfile: body.targetProfile,
     });
     return NextResponse.json({ candidates });
   } catch (err) {

@@ -133,6 +133,7 @@ export default function Home() {
           targetDistanceKm: stats.distanceKm,
           targetElevationGainM: stats.elevationGainM,
           approachDistanceKm,
+          targetProfile: stats.profile,
         }),
       });
       const data = await res.json();
@@ -349,6 +350,12 @@ function RouteSelectionScreen({
     points: candidate.points.map((p) => [p.lat, p.lon] as [number, number]),
   }));
   const activeIndex = hoveredRouteIndex ?? pinnedRouteIndex ?? 0;
+  const [chartHoverPoint, setChartHoverPoint] = useState<{ lat: number; lon: number } | null>(null);
+
+  // Drop any stale highlight from the previous candidate's chart when switching.
+  useEffect(() => {
+    setChartHoverPoint(null);
+  }, [activeIndex]);
 
   return (
     <main className="mx-auto flex h-screen max-w-6xl flex-col px-6 py-6">
@@ -382,6 +389,18 @@ function RouteSelectionScreen({
           highlightedRouteId={activeIndex}
           onRouteOptionHover={onHoverRoute}
           onRouteOptionClick={onPinRoute}
+          hoveredPoint={chartHoverPoint}
+        />
+      </div>
+
+      <div className="mt-4 shrink-0">
+        <ElevationProfileChart
+          profile={candidates[activeIndex].matchedStats.profile}
+          targetProfile={stats.profile}
+          unitSystem={unitSystem}
+          theme={theme}
+          onHoverPoint={setChartHoverPoint}
+          highlightPoint={chartHoverPoint}
         />
       </div>
 

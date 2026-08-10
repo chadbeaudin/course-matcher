@@ -1,5 +1,6 @@
 import { RouteGraph } from './graph';
 import { GRID_WAYS } from './testFixtures';
+import type { OSMWay } from './overpass';
 
 describe('RouteGraph.fromWays', () => {
   it('builds one node per grid intersection', () => {
@@ -40,5 +41,85 @@ describe('findPath', () => {
 
     const overlap = [...inbound.segIds].filter((id) => outbound.segIds.has(id));
     expect(overlap.length).toBeLessThan(outbound.segIds.size);
+  });
+});
+
+describe('findGradeMatchedPath', () => {
+  // Two same-distance routes from A to C: one that front-loads its climb (via B2, closely
+  // matching a target profile that wants a strong climb right away), and one that front-loads
+  // a shallow climb instead (via B1, undershooting that same target).
+  const A = { lat: 40, lon: -105 };
+  const B1 = { lat: 40.0005, lon: -105 };
+  const B2 = { lat: 40.0005, lon: -105.0000001 };
+  const C = { lat: 40.001, lon: -105 };
+
+  const ways: OSMWay[] = [
+    { id: 1, nodes: [100, 101, 102], geometry: [A, B1, C] },
+    { id: 2, nodes: [100, 103, 102], geometry: [A, B2, C] },
+  ];
+
+  const elevations = new Map<string, number>([
+    [`${A.lat},${A.lon}`, 0],
+    [`${B1.lat},${B1.lon}`, 2],
+    [`${B2.lat},${B2.lon}`, 8],
+    [`${C.lat},${C.lon}`, 10],
+  ]);
+  const elevationAt = (p: { lat: number; lon: number }) => elevations.get(`${p.lat},${p.lon}`) ?? 0;
+
+  it('prefers the route matching the target climb over the merely-shorter one', () => {
+    const graph = RouteGraph.fromWays(ways);
+    // Wants a strong climb in the first ~60m, then no preference — matches B2 (grade ~14%)
+    // far better than B1 (grade ~3.6%), even though both routes cover the same distance.
+    const targetGradeAt = (cumKm: number) => (cumKm < 0.06 ? 12 : 0);
+
+    const result = graph.findGradeMatchedPath('100', '102', { elevationAt, targetGradeAt })!;
+
+    expect(result).not.toBeNull();
+    expect(result.points[1]).toEqual(B2);
+  });
+
+  it('falls back to plain shortest-path behavior when the target wants no particular grade', () => {
+    const graph = RouteGraph.fromWays(ways);
+    const result = graph.findGradeMatchedPath('100', '102', {
+      elevationAt,
+      targetGradeAt: () => 0,
+    })!;
+
+    expect(result).not.toBeNull();
+    expect(result.distanceKm).toBeGreaterThan(0);
+  });
+
+  it('returns null when either node does not exist', () => {
+    const graph = RouteGraph.fromWays(ways);
+    expect(
+      graph.findGradeMatchedPath('100', 'nonexistent', { elevationAt, targetGradeAt: () => 0 })
+    ).toBeNull();
+  });
+
+  describe('computeHilliness', () => {
+    it('scores a node surrounded by steep edges higher than one surrounded by flat edges', () => {
+      // D-E-F is flat throughout; D-G-F climbs steeply then descends, same distances as D-E-F.
+      const D = { lat: 41, lon: -106 };
+      const E = { lat: 41.0005, lon: -106 };
+      const F = { lat: 41.001, lon: -106 };
+      const G = { lat: 41.0005, lon: -106.0000001 };
+
+      const hillWays: OSMWay[] = [
+        { id: 1, nodes: [200, 201, 202], geometry: [D, E, F] },
+        { id: 2, nodes: [200, 203, 202], geometry: [D, G, F] },
+      ];
+      const hillElevations = new Map<string, number>([
+        [`${D.lat},${D.lon}`, 0],
+        [`${E.lat},${E.lon}`, 0],
+        [`${F.lat},${F.lon}`, 0],
+        [`${G.lat},${G.lon}`, 50],
+      ]);
+      const hillElevationAt = (p: { lat: number; lon: number }) => hillElevations.get(`${p.lat},${p.lon}`) ?? 0;
+
+      const graph = RouteGraph.fromWays(hillWays);
+      const scores = graph.computeHilliness(hillElevationAt);
+
+      expect(scores.get('203')).toBeGreaterThan(scores.get('201')!);
+    });
   });
 });

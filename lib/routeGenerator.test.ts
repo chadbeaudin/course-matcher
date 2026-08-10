@@ -3,11 +3,13 @@ jest.mock('./elevation');
 
 import { generateCandidateRoutes } from './routeGenerator';
 import { fetchOsmWays } from './overpass';
-import { fetchElevations } from './elevation';
+import { fetchElevations, fetchElevationsCoarse } from './elevation';
 import { GRID_WAYS, makeGridWays } from './testFixtures';
+import type { ProfilePoint } from './gpx';
 
 const mockFetchOsmWays = fetchOsmWays as jest.MockedFunction<typeof fetchOsmWays>;
 const mockFetchElevations = fetchElevations as jest.MockedFunction<typeof fetchElevations>;
+const mockFetchElevationsCoarse = fetchElevationsCoarse as jest.MockedFunction<typeof fetchElevationsCoarse>;
 
 describe('generateCandidateRoutes', () => {
   beforeEach(() => {
@@ -109,5 +111,65 @@ describe('generateCandidateRoutes with an approach distance', () => {
 
     expect(candidate.approachDistanceKm).toBe(0);
     expect(candidate.matchedRange.start).toBe(0);
+  });
+});
+
+describe('generateCandidateRoutes with a target profile (hill-tour path)', () => {
+  // North-south edges carry a steep, consistent grade (lat drives elevation below); east-west
+  // edges stay flat. That gives computeHilliness plenty of real hills to find and chain together.
+  const HILL_GRID = makeGridWays(9, 0.001);
+
+  beforeEach(() => {
+    mockFetchOsmWays.mockResolvedValue(HILL_GRID);
+    const elevationByLat = (points: { lat: number }[]) => points.map((p) => Math.round((p.lat - 40) * 100000));
+    mockFetchElevations.mockImplementation(async (points) => elevationByLat(points));
+    mockFetchElevationsCoarse.mockImplementation(async (points) => elevationByLat(points));
+  });
+
+  it('routes via the elevation-aware hill tour instead of a blind bearing when a target profile is given', async () => {
+    const targetProfile: ProfilePoint[] = [
+      { distanceKm: 0, elevationM: 0, lat: 40, lon: -105 },
+      { distanceKm: 0.1, elevationM: 30, lat: 40, lon: -105 },
+      { distanceKm: 0.2, elevationM: 0, lat: 40, lon: -105 },
+      { distanceKm: 0.3, elevationM: 30, lat: 40, lon: -105 },
+      { distanceKm: 0.4, elevationM: 0, lat: 40, lon: -105 },
+    ];
+
+    const candidates = await generateCandidateRoutes({
+      start: { lat: 40.0, lon: -105.0 },
+      targetDistanceKm: 0.4,
+      targetElevationGainM: 60,
+      targetProfile,
+      bearingSteps: 4,
+      candidateCount: 3,
+    });
+
+    expect(candidates.length).toBeGreaterThan(0);
+    for (const candidate of candidates) {
+      expect(candidate.points.length).toBeGreaterThan(1);
+      expect(candidate.stats.distanceKm).toBeGreaterThan(0);
+      expect(candidate.matchedStats.elevationGainM).toBeGreaterThan(0);
+    }
+  });
+
+  it('falls back to bearing candidates when no hilly terrain is found nearby', async () => {
+    mockFetchElevations.mockImplementation(async (points) => points.map(() => 1500));
+    mockFetchElevationsCoarse.mockImplementation(async (points) => points.map(() => 1500));
+
+    const targetProfile: ProfilePoint[] = [
+      { distanceKm: 0, elevationM: 0, lat: 40, lon: -105 },
+      { distanceKm: 0.4, elevationM: 0, lat: 40, lon: -105 },
+    ];
+
+    const candidates = await generateCandidateRoutes({
+      start: { lat: 40.0, lon: -105.0 },
+      targetDistanceKm: 0.4,
+      targetElevationGainM: 0,
+      targetProfile,
+      bearingSteps: 4,
+      candidateCount: 3,
+    });
+
+    expect(candidates.length).toBeGreaterThan(0);
   });
 });
