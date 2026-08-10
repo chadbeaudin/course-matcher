@@ -119,7 +119,7 @@ export default function ElevationProfileChart({
           dataKey="elevation"
           name="This route"
           stroke="#2563eb"
-          fill="#93c5fd"
+          fill="none"
           connectNulls
         />
         {targetProfile && (
