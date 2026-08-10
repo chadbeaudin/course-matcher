@@ -4,6 +4,7 @@ import {
   resampleProfile,
   buildTargetGradeFn,
   profileShapeError,
+  climbProfileError,
   type ProfilePoint,
 } from './gpx';
 import { SAMPLE_GPX } from './testFixtures';
@@ -126,5 +127,53 @@ describe('profileShapeError', () => {
 
   it('returns 0 when either profile has fewer than two points', () => {
     expect(profileShapeError([], [])).toBe(0);
+  });
+});
+
+describe('climbProfileError', () => {
+  // One sustained climb: 1km at ~5%.
+  const target: ProfilePoint[] = [
+    { distanceKm: 0, elevationM: 0, lat: 40, lon: -105 },
+    { distanceKm: 1, elevationM: 50, lat: 40.01, lon: -105 },
+    { distanceKm: 2, elevationM: 50, lat: 40.02, lon: -105 },
+  ];
+
+  it('is 0 for an identical set of climbs', () => {
+    expect(climbProfileError(target, target)).toBe(0);
+  });
+
+  it('prefers a climb of similar length and grade over a shorter, steeper one', () => {
+    // 1km at ~4.5% — close to target on both length and grade.
+    const similar: ProfilePoint[] = [
+      { distanceKm: 0, elevationM: 0, lat: 40, lon: -105 },
+      { distanceKm: 1, elevationM: 45, lat: 40.01, lon: -105 },
+      { distanceKm: 2, elevationM: 45, lat: 40.02, lon: -105 },
+    ];
+    // 0.2km at ~25% — same idea of "a climb", nothing like the target to ride.
+    const shortSteep: ProfilePoint[] = [
+      { distanceKm: 0, elevationM: 0, lat: 40, lon: -105 },
+      { distanceKm: 0.2, elevationM: 50, lat: 40.002, lon: -105 },
+      { distanceKm: 2, elevationM: 50, lat: 40.02, lon: -105 },
+    ];
+
+    expect(climbProfileError(similar, target)).toBeLessThan(climbProfileError(shortSteep, target));
+  });
+
+  it('penalizes a flat route that has no climbs at all', () => {
+    const flat: ProfilePoint[] = [
+      { distanceKm: 0, elevationM: 100, lat: 40, lon: -105 },
+      { distanceKm: 2, elevationM: 100, lat: 40.02, lon: -105 },
+    ];
+
+    expect(climbProfileError(flat, target)).toBe(1);
+  });
+
+  it('returns 0 when the target itself has no climbs to match', () => {
+    const flat: ProfilePoint[] = [
+      { distanceKm: 0, elevationM: 100, lat: 40, lon: -105 },
+      { distanceKm: 2, elevationM: 100, lat: 40.02, lon: -105 },
+    ];
+
+    expect(climbProfileError(target, flat)).toBe(0);
   });
 });

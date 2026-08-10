@@ -1,7 +1,7 @@
 jest.mock('./overpass');
 jest.mock('./elevation');
 
-import { generateCandidateRoutes } from './routeGenerator';
+import { generateCandidateRoutes, relativeDistanceError } from './routeGenerator';
 import { fetchOsmWays } from './overpass';
 import { fetchElevations, fetchElevationsCoarse } from './elevation';
 import { GRID_WAYS, makeGridWays } from './testFixtures';
@@ -111,6 +111,29 @@ describe('generateCandidateRoutes with an approach distance', () => {
 
     expect(candidate.approachDistanceKm).toBe(0);
     expect(candidate.matchedRange.start).toBe(0);
+  });
+});
+
+describe('relativeDistanceError', () => {
+  it('is 0 when the route hits the target exactly', () => {
+    expect(relativeDistanceError(40, 40)).toBe(0);
+  });
+
+  it('penalizes falling short far more than running the same amount long', () => {
+    const short = relativeDistanceError(30, 40); // 25% under
+    const long = relativeDistanceError(50, 40); // 25% over
+
+    expect(short).toBeGreaterThan(long);
+    // A 25% shortfall should read as a serious miss, not a near-match.
+    expect(short).toBeGreaterThan(0.5);
+  });
+
+  it('treats running long as a mild, proportional cost', () => {
+    expect(relativeDistanceError(48, 40)).toBeCloseTo(0.2, 6);
+  });
+
+  it('returns 0 for a non-positive target rather than dividing by zero', () => {
+    expect(relativeDistanceError(10, 0)).toBe(0);
   });
 });
 

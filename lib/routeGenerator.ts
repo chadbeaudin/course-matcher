@@ -7,7 +7,7 @@ import {
   computeRouteStats,
   buildTargetGradeFn,
   profileShapeError,
-  segmentClimbs,
+  climbProfileError,
   type TrackPoint,
   type RouteStats,
   type ProfilePoint,
@@ -18,6 +18,21 @@ import {
 // relative errors, typically 0-0.35), so shape mismatch meaningfully affects ranking
 // without swamping the existing distance/elevation-total signal.
 const SHAPE_ERROR_WEIGHT = 0.05;
+// Matching the race's actual climbs (lengths and grades) is the point of the app, so
+// climb mismatch outweighs the raw distance/elevation totals in ranking.
+const CLIMB_ERROR_WEIGHT = 2;
+// Coming up short means the ride doesn't deliver the target workout; running long is
+// easy to live with (or trim), so undershoot costs several times what overshoot does.
+const DISTANCE_UNDERSHOOT_PENALTY = 4;
+// A route this much shorter than the target isn't a usable substitute at all.
+const MAX_ACCEPTABLE_UNDERSHOOT = 0.12;
+// ...but never discard every option; if nothing clears the bar, still show the best few.
+const OVERSHOOT_TOLERANCE = 0.5;
+// Upper bound on hills strung into one tour, so a pathological pool can't spin forever.
+const MAX_TOUR_LEGS = 12;
+// Roads wind, so the ride home is longer than the straight line back; used to decide
+// when the tour has enough distance banked to start heading for the finish.
+const ROAD_WINDING_FACTOR = 1.35;
 
 export interface GenerateOptions {
   start: LatLon;
@@ -93,6 +108,7 @@ export async function generateCandidateRoutes(options: GenerateOptions): Promise
           elevationGrid,
           targetGradeAt,
           targetProfile,
+          targetDistanceKm,
           attempts: bearingSteps,
         })
       : generateBearingCandidates({
@@ -109,9 +125,12 @@ export async function generateCandidateRoutes(options: GenerateOptions): Promise
   }
 
   // Only spend elevation API calls on candidates that are plausibly close to the target.
-  const withinTolerance = rawCandidates.filter(
-    (c) => Math.abs(c.matchedDistanceKm - targetDistanceKm) / targetDistanceKm <= 0.35
-  );
+  // Asymmetric on purpose: a route that runs long can still be ridden (or trimmed),
+  // but one that falls well short can't deliver the target workout at all.
+  const withinTolerance = rawCandidates.filter((c) => {
+    const ratio = (c.matchedDistanceKm - targetDistanceKm) / targetDistanceKm;
+    return ratio >= -MAX_ACCEPTABLE_UNDERSHOOT && ratio <= OVERSHOOT_TOLERANCE;
+  });
   const toScore = withinTolerance.length > 0 ? withinTolerance : rawCandidates;
 
   const scored: RouteCandidate[] = [];
@@ -128,7 +147,7 @@ export async function generateCandidateRoutes(options: GenerateOptions): Promise
     const matchedTrackPoints = trackPoints.slice(matchedStartIdx, matchedStartIdx + candidate.matchedPointCount);
     const matchedStats = computeRouteStats(matchedTrackPoints);
 
-    const distanceError = Math.abs(matchedStats.distanceKm - targetDistanceKm) / targetDistanceKm;
+    const distanceError = relativeDistanceError(matchedStats.distanceKm, targetDistanceKm);
     const elevationError =
       targetElevationGainM > 0
         ? Math.abs(matchedStats.elevationGainM - targetElevationGainM) / targetElevationGainM
@@ -137,6 +156,11 @@ export async function generateCandidateRoutes(options: GenerateOptions): Promise
     // completely different points along the way — penalize that mismatch too, so
     // the recommended candidate is the one that actually tracks the target's climbs.
     const shapeError = targetProfile ? profileShapeError(matchedStats.profile, targetProfile) * SHAPE_ERROR_WEIGHT : 0;
+    // Totals alone can't tell a few long steady climbs from many short steep ones —
+    // compare the climbs themselves, which is what makes the ride train like the race.
+    const climbError = targetProfile
+      ? climbProfileError(matchedStats.profile, targetProfile) * CLIMB_ERROR_WEIGHT
+      : 0;
 
     scored.push({
       points: trackPoints,
@@ -145,7 +169,7 @@ export async function generateCandidateRoutes(options: GenerateOptions): Promise
       approachDistanceKm: candidate.approachDistanceKm,
       matchedRange: { start: matchedStartIdx, end: matchedStartIdx + candidate.matchedPointCount },
       bearingDeg: candidate.bearingDeg,
-      score: distanceError + elevationError + shapeError,
+      score: distanceError + elevationError + shapeError + climbError,
     });
   }
 
@@ -229,6 +253,8 @@ interface HillTourParams {
   elevationGrid: ElevationGrid;
   targetGradeAt: (cumulativeKm: number) => number;
   targetProfile: ProfilePoint[];
+  /** Road distance the matched course should cover — the tour grows until it can finish near this. */
+  targetDistanceKm: number;
   /** How many different tours to attempt (mirrors bearingSteps for the fallback path). */
   attempts: number;
 }
@@ -247,16 +273,22 @@ interface HillWaypoint {
  * happen to sit on one of a handful of straight lines out from the start.
  */
 function generateHillTourCandidates(params: HillTourParams): RawCandidate[] {
-  const { graph, startNodeId, start, approachDistanceKm, oneWayTargetKm, elevationGrid, targetGradeAt, targetProfile, attempts } =
-    params;
+  const {
+    graph,
+    startNodeId,
+    start,
+    approachDistanceKm,
+    oneWayTargetKm,
+    elevationGrid,
+    targetGradeAt,
+    targetDistanceKm,
+    attempts,
+  } = params;
   const elevationAt = (p: LatLon) => elevationGrid.elevationAt(p);
   const fallback = () =>
     generateBearingCandidates({ graph, startNodeId, start, approachDistanceKm, oneWayTargetKm, bearingSteps: attempts });
 
   const hilliness = graph.computeHilliness(elevationAt);
-
-  // How many separate climbs to try to string together, based on how many the target itself has.
-  const numWaypoints = Math.min(Math.max(segmentClimbs(targetProfile).length, 2), 5);
 
   // Only consider genuinely hilly, reachable nodes as tour candidates — keeps the pool small and relevant.
   const HILLY_GRADE_THRESHOLD_PERCENT = 2;
@@ -287,7 +319,6 @@ function generateHillTourCandidates(params: HillTourParams): RawCandidate[] {
     if (!seed) break;
     usedSeeds.push(seed);
 
-    const tourWaypoints = buildHillTour(pool, seed, oneWayTargetKm, numWaypoints);
     const bearingDeg = initialBearingDeg(start, seed.point);
 
     const ringAnchor = approachDistanceKm > 0 ? destinationPoint(start, approachDistanceKm, bearingDeg) : start;
@@ -305,33 +336,66 @@ function generateHillTourCandidates(params: HillTourParams): RawCandidate[] {
       approachActualKm = approachPath.distanceKm;
     }
 
-    const legStops = [ringNodeId, ...tourWaypoints.map((w) => w.id), ringNodeId];
+    const ringPoint = graph.getNode(ringNodeId);
+    if (!ringPoint) continue;
+
+    // Build the tour leg by leg against *actual road distance*, adding hills until the
+    // ride is long enough that heading home lands near the target. Selecting waypoints
+    // up front on straight-line distance (as a fixed-size set) systematically produced
+    // routes well short of target, since road distance and cluster spread don't match.
     const legPointSets: LatLon[][] = [];
     let cumulativeKm = 0;
     let usedSegIds = new Set<string>();
+    let currentNodeId = ringNodeId;
+    let currentPoint: LatLon = ringPoint;
+    const visited = new Set<string>();
     let tourFailed = false;
 
-    for (let i = 0; i < legStops.length - 1; i++) {
-      const fromId = legStops[i];
-      const toId = legStops[i + 1];
-      if (fromId === toId) continue;
+    const routeLeg = (fromId: string, toId: string): PathResult | null =>
+      graph.findGradeMatchedPath(fromId, toId, {
+        elevationAt,
+        targetGradeAt,
+        startCumulativeKm: cumulativeKm,
+        penalizeSegIds: usedSegIds,
+      }) ?? graph.findPath(fromId, toId, usedSegIds);
 
-      const leg: PathResult | null =
-        graph.findGradeMatchedPath(fromId, toId, {
-          elevationAt,
-          targetGradeAt,
-          startCumulativeKm: cumulativeKm,
-          penalizeSegIds: usedSegIds,
-        }) ?? graph.findPath(fromId, toId, usedSegIds);
+    for (let leg = 0; leg < MAX_TOUR_LEGS; leg++) {
+      const remainingKm = targetDistanceKm - cumulativeKm;
+      // Road distance home is at least the straight line; pad so we don't overshoot badly.
+      if (remainingKm <= haversineKm(currentPoint, ringPoint) * ROAD_WINDING_FACTOR) break;
 
-      if (!leg) {
-        tourFailed = true;
-        break;
+      const next = pickNextHill({
+        pool,
+        from: currentPoint,
+        ringPoint,
+        visited,
+        remainingKm,
+        preferred: leg === 0 ? seed : undefined,
+      });
+      if (!next) break;
+
+      const legPath = routeLeg(currentNodeId, next.id);
+      if (!legPath) {
+        visited.add(next.id);
+        continue;
       }
 
-      legPointSets.push(leg.points);
-      cumulativeKm += leg.distanceKm;
-      usedSegIds = new Set([...usedSegIds, ...leg.segIds]);
+      legPointSets.push(legPath.points);
+      cumulativeKm += legPath.distanceKm;
+      usedSegIds = new Set([...usedSegIds, ...legPath.segIds]);
+      currentNodeId = next.id;
+      currentPoint = next.point;
+      visited.add(next.id);
+    }
+
+    if (currentNodeId !== ringNodeId) {
+      const homeLeg = routeLeg(currentNodeId, ringNodeId);
+      if (!homeLeg) {
+        tourFailed = true;
+      } else {
+        legPointSets.push(homeLeg.points);
+        cumulativeKm += homeLeg.distanceKm;
+      }
     }
 
     if (tourFailed || legPointSets.length === 0) continue;
@@ -360,34 +424,45 @@ function generateHillTourCandidates(params: HillTourParams): RawCandidate[] {
   return rawCandidates.length > 0 ? rawCandidates : fallback();
 }
 
-/** Greedy nearest-neighbor tour through hilly waypoints, starting from `seed`, bounded to roughly a one-way trip's worth of distance. */
-function buildHillTour(pool: HillWaypoint[], seed: HillWaypoint, oneWayTargetKm: number, numWaypoints: number): HillWaypoint[] {
-  const chosen: HillWaypoint[] = [seed];
-  let current = seed.point;
-  let cumulativeKm = 0;
-  const remaining = pool.filter((c) => c.id !== seed.id);
-  const maxTourKm = oneWayTargetKm * 1.4;
+/**
+ * Next hill to ride to: the hilliest one that's a sensible step away and still leaves
+ * enough remaining budget to get back to the finish. Weighs hilliness against the
+ * detour it costs, so the tour keeps collecting real climbs instead of either wandering
+ * off beyond return range or hugging whatever hill happens to be nearest.
+ */
+function pickNextHill(params: {
+  pool: HillWaypoint[];
+  from: LatLon;
+  ringPoint: LatLon;
+  visited: Set<string>;
+  remainingKm: number;
+  preferred?: HillWaypoint;
+}): HillWaypoint | null {
+  const { pool, from, ringPoint, visited, remainingKm, preferred } = params;
 
-  while (chosen.length < numWaypoints && remaining.length > 0) {
-    let bestIdx = -1;
-    let bestDistKm = Infinity;
-    for (let i = 0; i < remaining.length; i++) {
-      const d = haversineKm(current, remaining[i].point);
-      if (d < bestDistKm) {
-        bestDistKm = d;
-        bestIdx = i;
-      }
+  if (preferred && !visited.has(preferred.id)) return preferred;
+
+  let best: HillWaypoint | null = null;
+  let bestValue = -Infinity;
+
+  for (const candidate of pool) {
+    if (visited.has(candidate.id)) continue;
+
+    const stepKm = haversineKm(from, candidate.point);
+    if (stepKm < 0.3) continue;
+
+    // Must still be able to get home afterwards within what's left of the target.
+    const homeKm = haversineKm(candidate.point, ringPoint);
+    if ((stepKm + homeKm) * ROAD_WINDING_FACTOR > remainingKm) continue;
+
+    const value = candidate.hilliness / (1 + stepKm);
+    if (value > bestValue) {
+      bestValue = value;
+      best = candidate;
     }
-    if (bestIdx === -1 || cumulativeKm + bestDistKm > maxTourKm) break;
-
-    const next = remaining[bestIdx];
-    chosen.push(next);
-    cumulativeKm += bestDistKm;
-    current = next.point;
-    remaining.splice(bestIdx, 1);
   }
 
-  return chosen;
+  return best;
 }
 
 function initialBearingDeg(from: LatLon, to: LatLon): number {
@@ -397,6 +472,13 @@ function initialBearingDeg(from: LatLon, to: LatLon): number {
   const y = Math.sin(Δλ) * Math.cos(φ2);
   const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
   return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+}
+
+/** Relative distance miss, weighted so falling short of the target hurts far more than running long. */
+export function relativeDistanceError(actualKm: number, targetKm: number): number {
+  if (targetKm <= 0) return 0;
+  const ratio = (actualKm - targetKm) / targetKm;
+  return ratio < 0 ? -ratio * DISTANCE_UNDERSHOOT_PENALTY : ratio;
 }
 
 function bearingDiffDeg(a: number, b: number): number {

@@ -193,6 +193,49 @@ export function profileShapeError(profile: ProfilePoint[], targetProfile: Profil
   return count > 0 ? sumAbsDiff / count : 0;
 }
 
+/**
+ * How well a candidate's individual climbs match the target's, by length and grade —
+ * what actually makes a training route "feel like" the race. Each target climb is
+ * greedily paired with its closest unused candidate climb; a target climb with no
+ * counterpart costs a full miss. Returns roughly 0 (identical climbs) to ~1+ (nothing
+ * matches), so it's directly comparable with the relative distance/elevation errors.
+ *
+ * Deliberately ignores where along the route each climb falls: riding the same climbs
+ * in a different order is still good training, whereas having no comparable climb at
+ * all is not.
+ */
+export function climbProfileError(profile: ProfilePoint[], targetProfile: ProfilePoint[]): number {
+  const targetClimbs = segmentClimbs(targetProfile);
+  if (targetClimbs.length === 0) return 0;
+
+  const available = segmentClimbs(profile).slice();
+  const FULL_MISS_COST = 1;
+  let totalCost = 0;
+
+  for (const target of targetClimbs) {
+    let bestIdx = -1;
+    let bestCost = FULL_MISS_COST;
+
+    for (let i = 0; i < available.length; i++) {
+      const lengthError = Math.abs(available[i].lengthKm - target.lengthKm) / target.lengthKm;
+      const gradeError =
+        target.gradePercent > 0
+          ? Math.abs(available[i].gradePercent - target.gradePercent) / target.gradePercent
+          : 0;
+      const cost = Math.min((lengthError + gradeError) / 2, FULL_MISS_COST);
+      if (cost < bestCost) {
+        bestCost = cost;
+        bestIdx = i;
+      }
+    }
+
+    totalCost += bestCost;
+    if (bestIdx >= 0) available.splice(bestIdx, 1);
+  }
+
+  return totalCost / targetClimbs.length;
+}
+
 export function computeRouteStats(points: TrackPoint[]): RouteStats {
   const smoothed = smoothElevations(points);
   const profile: ProfilePoint[] = [];
