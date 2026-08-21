@@ -2,6 +2,8 @@
 
 Upload the GPX file for a race you're training for, and course-matcher generates a route near you that matches its distance and elevation gain — so you can train on something that actually resembles race day, without traveling to the race location.
 
+**Live:** [race-course-matcher.vercel.app](https://race-course-matcher.vercel.app/)
+
 ## How it works
 
 1. Upload your race's GPX file to see its distance, elevation gain, and elevation profile.
