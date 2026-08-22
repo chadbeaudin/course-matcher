@@ -42,6 +42,7 @@ export default function ElevationProfileChart({
   theme,
   onHoverPoint,
   highlightPoint,
+  elevationDomainM,
 }: {
   profile: ProfilePoint[];
   /** An optional second profile (e.g. the race being matched) to overlay for comparison. */
@@ -52,6 +53,13 @@ export default function ElevationProfileChart({
   onHoverPoint?: (point: LatLon | null) => void;
   /** A lat/lon (e.g. from hovering the map) to highlight on the chart. */
   highlightPoint?: LatLon | null;
+  /**
+   * Fixed [min, max] elevation range (meters) to render, so the Y-axis (and therefore
+   * the visual shape of any overlaid profile) doesn't rescale as `profile` changes —
+   * e.g. when switching between candidate routes with different elevation ranges.
+   * Falls back to auto-scaling to the current data when omitted.
+   */
+  elevationDomainM?: [number, number];
 }) {
   const distUnit = distanceUnitLabel(unitSystem);
   const eleUnit = elevationUnitLabel(unitSystem);
@@ -103,7 +111,16 @@ export default function ElevationProfileChart({
           minTickGap={40}
           tick={{ fill: tickColor }}
         />
-        <YAxis tickFormatter={(v) => `${v} ${eleUnit}`} width={72} tick={{ fill: tickColor }} />
+        <YAxis
+          tickFormatter={(v) => `${v} ${eleUnit}`}
+          width={72}
+          tick={{ fill: tickColor }}
+          domain={
+            elevationDomainM
+              ? [Math.round(toDisplayElevation(elevationDomainM[0])), Math.round(toDisplayElevation(elevationDomainM[1]))]
+              : ['auto', 'auto']
+          }
+        />
         <Tooltip
           formatter={(value, name) => [`${value} ${eleUnit}`, name]}
           labelFormatter={(v) => `${v} ${distUnit}`}
@@ -149,7 +166,20 @@ export default function ElevationProfileChart({
   );
 }
 
-function buildChartData(
+/**
+ * Fixed [min, max] elevation range (meters) covering every given profile, with padding.
+ * Pass the result as `elevationDomainM` so a chart's Y-axis (and any profile's shape)
+ * stays stable while `profiles` themselves change, e.g. when switching between candidates.
+ */
+export function computeElevationDomainM(profiles: ProfilePoint[][]): [number, number] {
+  const elevations = profiles.flatMap((p) => p.map((point) => point.elevationM));
+  const min = Math.min(...elevations);
+  const max = Math.max(...elevations);
+  const pad = Math.max((max - min) * 0.05, 10);
+  return [min - pad, max + pad];
+}
+
+export function buildChartData(
   profile: ProfilePoint[],
   targetProfile: ProfilePoint[] | undefined,
   toDisplayDistance: (km: number) => number,
@@ -164,12 +194,18 @@ function buildChartData(
     }));
   }
 
-  const maxDistanceKm = Math.max(
-    profile.at(-1)?.distanceKm ?? 0,
-    targetProfile.at(-1)?.distanceKm ?? 0
-  );
+  const targetMaxDistanceKm = targetProfile.at(-1)?.distanceKm ?? 0;
+  const routeMaxDistanceKm = profile.at(-1)?.distanceKm ?? 0;
+  const maxDistanceKm = Math.max(routeMaxDistanceKm, targetMaxDistanceKm);
   const binCount = 60;
-  const binDistancesKm = Array.from({ length: binCount + 1 }, (_, i) => (i / binCount) * maxDistanceKm);
+  // Bin spacing is fixed to the target's own distance so its resampled shape stays
+  // identical across renders, regardless of which candidate route (with a different
+  // total distance) is currently displayed alongside it.
+  const binKm = targetMaxDistanceKm > 0 ? targetMaxDistanceKm / binCount : maxDistanceKm / binCount;
+  const binCountTotal = binKm > 0 ? Math.ceil(maxDistanceKm / binKm) : 0;
+  const binDistancesKm = Array.from({ length: binCountTotal + 1 }, (_, i) =>
+    Math.min(i * binKm, maxDistanceKm)
+  );
 
   const primary = resampleProfile(profile, binDistancesKm);
   const target = resampleProfile(targetProfile, binDistancesKm);

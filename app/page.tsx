@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { parseGpx, computeRouteStats, type RouteStats, type TrackPoint } from '@/lib/gpx';
 import type { RouteCandidate } from '@/lib/routeGenerator';
@@ -15,7 +15,7 @@ import {
   miToKm,
 } from '@/lib/units';
 import { type Theme, detectDefaultTheme, loadStoredTheme, storeTheme, applyTheme } from '@/lib/theme';
-import ElevationProfileChart from '@/components/ElevationProfileChart';
+import ElevationProfileChart, { computeElevationDomainM } from '@/components/ElevationProfileChart';
 import RwgpsConnectDialog from '@/components/RwgpsConnectDialog';
 import RouteNameDialog from '@/components/RouteNameDialog';
 import RwgpsSuccessDialog from '@/components/RwgpsSuccessDialog';
@@ -446,6 +446,13 @@ function RouteSelectionScreen({
   const activeIndex = hoveredRouteIndex ?? pinnedRouteIndex ?? 0;
   const [chartHoverPoint, setChartHoverPoint] = useState<{ lat: number; lon: number } | null>(null);
 
+  // Fixed across all candidates so the Y-axis (and the race line's shape) doesn't
+  // rescale as the user hovers/switches between routes with different elevation ranges.
+  const elevationDomainM = useMemo(
+    () => computeElevationDomainM([stats.profile, ...candidates.map((c) => c.matchedStats.profile)]),
+    [stats.profile, candidates]
+  );
+
   // Drop any stale highlight from the previous candidate's chart when switching.
   useEffect(() => {
     setChartHoverPoint(null);
@@ -495,6 +502,7 @@ function RouteSelectionScreen({
           theme={theme}
           onHoverPoint={setChartHoverPoint}
           highlightPoint={chartHoverPoint}
+          elevationDomainM={elevationDomainM}
         />
       </div>
 
